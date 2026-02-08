@@ -1,6 +1,13 @@
 # TopGames API Java Client
 
+[![Javadoc](https://img.shields.io/badge/JavaDoc-Online-green)](https://TitanEch0.github.io/TopGames-API/)
+
 A modern, robust, and feature-rich Java client for the Top-Games API. This library is designed for high performance and resilience, making it suitable for production environments.
+
+## Documentation
+
+*   **[Online Javadoc](https://TitanEch0.github.io/TopGames-API/)**: Full API reference.
+*   **[Wiki](https://github.com/TitanEch0/TopGames-API/wiki)**: Detailed guides and examples.
 
 ## Features
 

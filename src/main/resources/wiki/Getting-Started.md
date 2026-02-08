@@ -4,33 +4,31 @@ This guide shows you how to initialize the client and make your first request.
 
 ## 1. Create the Client
 
-The `TopGamesClient` uses a builder pattern. The only required parameter is your API Key.
+The `TopGamesClient` uses a builder pattern. The only required parameter is your API Key (Server Token).
 
 ```java
 import xyz.titanecho.topgamesapi.TopGamesClient;
 
 TopGamesClient client = new TopGamesClient.Builder()
-    .apiKey("YOUR_SECRET_API_KEY")
+    .apiKey("YOUR_SERVER_TOKEN")
     .build();
 ```
 
-## 2. Fetch a Game
+## 2. Fetch Server Info
 
-Use the `getGame` method to retrieve details about a specific game by its ID.
+A simple call to verify everything is working.
 
 ```java
-import xyz.titanecho.topgamesapi.model.Game;
+import xyz.titanecho.topgamesapi.model.Server;
 import xyz.titanecho.topgamesapi.TopGamesException;
 
 try {
-    Game game = client.getGame("12345");
-    
-    System.out.println("ID: " + game.getId());
-    System.out.println("Name: " + game.getName());
-    System.out.println("Rank: " + game.getRank());
+    Server server = client.getServerInfo();
+    System.out.println("Connected to: " + server.getName());
+    System.out.println("Current Rank: " + server.getRank());
     
 } catch (TopGamesException e) {
-    System.err.println("Failed to fetch game: " + e.getMessage());
+    System.err.println("Failed to fetch server info: " + e.getMessage());
 }
 ```
 

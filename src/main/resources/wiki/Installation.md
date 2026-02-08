@@ -24,7 +24,7 @@ Add the library dependency:
 <dependency>
     <groupId>io.github.titanech0</groupId>
     <artifactId>topgames-api</artifactId>
-    <version>1.0.5</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
@@ -60,6 +60,6 @@ repositories {
 }
 
 dependencies {
-    implementation 'io.github.titanech0:topgames-api:1.0.5'
+    implementation 'io.github.titanech0:topgames-api:1.1.0'
 }
 ```

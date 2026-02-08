@@ -8,14 +8,20 @@ import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.HttpUrl;
 import okhttp3.Interceptor;
+import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
+import okhttp3.RequestBody;
 import okhttp3.Response;
 import okhttp3.logging.HttpLoggingInterceptor;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import xyz.titanecho.topgamesapi.model.Game;
+import xyz.titanecho.topgamesapi.model.PlayerRanking;
+import xyz.titanecho.topgamesapi.model.Server;
+import xyz.titanecho.topgamesapi.model.Stat;
+import xyz.titanecho.topgamesapi.model.Vote;
 
 import java.io.Closeable;
 import java.io.File;
@@ -27,6 +33,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 /**
  * The main client for interacting with the Top-Games API.
@@ -36,12 +43,14 @@ public class TopGamesClient implements Closeable {
     private static final Logger log = LoggerFactory.getLogger(TopGamesClient.class);
 
     private final HttpUrl baseUrl;
+    private final String apiKey;
     private final OkHttpClient client;
     private final Gson gson;
-    private final RateLimitInterceptor rateLimitInterceptor; // Keep a reference for shutdown
+    private final RateLimitInterceptor rateLimitInterceptor;
 
     private TopGamesClient(Builder builder) {
         this.baseUrl = Objects.requireNonNull(HttpUrl.parse(builder.baseUrl), "Base URL must be a valid URL");
+        this.apiKey = builder.apiKey;
         this.gson = new Gson();
         this.rateLimitInterceptor = builder.rateLimitInterceptor;
 
@@ -49,7 +58,6 @@ public class TopGamesClient implements Closeable {
                 .connectTimeout(builder.connectTimeout, builder.connectTimeoutUnit)
                 .readTimeout(builder.readTimeout, builder.readTimeoutUnit);
 
-        // Add custom interceptors first
         for (Interceptor interceptor : builder.customInterceptors) {
             clientBuilder.addInterceptor(interceptor);
         }
@@ -65,7 +73,7 @@ public class TopGamesClient implements Closeable {
         if (builder.debugLogging) {
             HttpLoggingInterceptor loggingInterceptor = new HttpLoggingInterceptor(log::debug);
             loggingInterceptor.setLevel(HttpLoggingInterceptor.Level.BODY);
-            clientBuilder.addNetworkInterceptor(loggingInterceptor); // Use addNetworkInterceptor for better logging
+            clientBuilder.addNetworkInterceptor(loggingInterceptor);
         }
 
         this.client = clientBuilder.build();
@@ -75,14 +83,11 @@ public class TopGamesClient implements Closeable {
     @Override
     public void close() {
         log.info("Closing TopGamesClient and releasing resources.");
-        // Shutdown internal scheduler of the rate limiter
         if (rateLimitInterceptor != null) {
             rateLimitInterceptor.shutdown();
         }
-        // Shutdown OkHttp's dispatcher and connection pool
         client.dispatcher().executorService().shutdown();
         client.connectionPool().evictAll();
-        // Close the cache
         Cache cache = client.cache();
         if (cache != null) {
             try {
@@ -93,9 +98,6 @@ public class TopGamesClient implements Closeable {
         }
     }
 
-    /**
-     * A builder for creating instances of {@link TopGamesClient}.
-     */
     public static class Builder {
         private String apiKey;
         private String baseUrl = "https://api.top-games.net/v1";
@@ -139,11 +141,6 @@ public class TopGamesClient implements Closeable {
             return this;
         }
 
-        /**
-         * Adds a custom application-level interceptor.
-         * @param interceptor The interceptor to add.
-         * @return This builder.
-         */
         public Builder addInterceptor(@NotNull Interceptor interceptor) {
             this.customInterceptors.add(interceptor);
             return this;
@@ -151,7 +148,6 @@ public class TopGamesClient implements Closeable {
 
         public TopGamesClient build() {
             Objects.requireNonNull(apiKey, "API key must be set");
-            // Add authentication interceptor as the last one to ensure it has the final say on the request
             customInterceptors.add(chain -> {
                 Request original = chain.request();
                 Request authenticated = original.newBuilder()
@@ -164,7 +160,6 @@ public class TopGamesClient implements Closeable {
         }
     }
 
-    // ... (rest of the methods are unchanged)
     private <T> T execute(Request request, Type typeOfT) throws TopGamesException {
         log.debug("Executing synchronous request: {} {}", request.method(), request.url());
         try (Response response = client.newCall(request).execute()) {
@@ -209,6 +204,9 @@ public class TopGamesClient implements Closeable {
 
         log.debug("Successfully received response for: {}", response.request().url());
         if (response.body() == null) {
+            if (typeOfT == Void.class) {
+                return null;
+            }
             throw new TopGamesException("Response body is null");
         }
 
@@ -254,5 +252,156 @@ public class TopGamesClient implements Closeable {
         Request request = new Request.Builder().url(url).get().build();
         Type listType = new TypeToken<List<Game>>() {}.getType();
         return executeAsync(request, listType);
+    }
+
+    public List<Vote> getUnclaimedVotes() throws TopGamesException {
+         HttpUrl url = baseUrl.newBuilder()
+                .addPathSegment("votes")
+                .addPathSegment("last")
+                .addQueryParameter("server_token", this.apiKey)
+                .build();
+
+        Request request = new Request.Builder().url(url).get().build();
+        
+        Type responseType = new TypeToken<ApiResponse<List<Vote>>>() {}.getType();
+        ApiResponse<List<Vote>> response = execute(request, responseType);
+        return response.getData();
+    }
+
+    public CompletableFuture<List<Vote>> getUnclaimedVotesAsync() {
+         HttpUrl url = baseUrl.newBuilder()
+                .addPathSegment("votes")
+                .addPathSegment("last")
+                .addQueryParameter("server_token", this.apiKey)
+                .build();
+        Request request = new Request.Builder().url(url).get().build();
+        
+        Type responseType = new TypeToken<ApiResponse<List<Vote>>>() {}.getType();
+        CompletableFuture<ApiResponse<List<Vote>>> future = executeAsync(request, responseType);
+        return future.thenApply(response -> response.getData());
+    }
+
+    public void claimVote(String voteId) throws TopGamesException {
+        throw new UnsupportedOperationException("Use claimVoteByUsername or claimVoteBySteamId instead.");
+    }
+    
+    public void claimVoteByUsername(String username) throws TopGamesException {
+        HttpUrl url = baseUrl.newBuilder()
+                .addPathSegment("votes")
+                .addPathSegment("claim-username")
+                .addQueryParameter("server_token", this.apiKey)
+                .addQueryParameter("playername", username)
+                .build();
+        
+        Request request = new Request.Builder().url(url).get().build();
+        execute(request, Void.class);
+    }
+
+    public void claimVoteBySteamId(String steamId) throws TopGamesException {
+        HttpUrl url = baseUrl.newBuilder()
+                .addPathSegment("votes")
+                .addPathSegment("claim-steam")
+                .addQueryParameter("server_token", this.apiKey)
+                .addQueryParameter("steam_id", steamId)
+                .build();
+
+        Request request = new Request.Builder().url(url).get().build();
+        execute(request, Void.class);
+    }
+
+    public Server getServerInfo() throws TopGamesException {
+        HttpUrl url = baseUrl.newBuilder()
+                .addPathSegment("servers")
+                .addPathSegment(this.apiKey)
+                .build();
+        Request request = new Request.Builder().url(url).get().build();
+        Type responseType = new TypeToken<ApiResponse<Server>>() {}.getType();
+        ApiResponse<Server> response = execute(request, responseType);
+        return response.getData();
+    }
+
+    public Server getFullServerInfo() throws TopGamesException {
+        HttpUrl url = baseUrl.newBuilder()
+                .addPathSegment("servers")
+                .addPathSegment(this.apiKey)
+                .addPathSegment("full")
+                .build();
+        Request request = new Request.Builder().url(url).get().build();
+        Type responseType = new TypeToken<ApiResponse<Server>>() {}.getType();
+        ApiResponse<Server> response = execute(request, responseType);
+        return response.getData();
+    }
+
+    public List<Stat> getServerStats() throws TopGamesException {
+        HttpUrl url = baseUrl.newBuilder()
+                .addPathSegment("servers")
+                .addPathSegment(this.apiKey)
+                .addPathSegment("stats")
+                .build();
+        Request request = new Request.Builder().url(url).get().build();
+        Type responseType = new TypeToken<ApiResponse<List<Stat>>>() {}.getType();
+        ApiResponse<List<Stat>> response = execute(request, responseType);
+        return response.getData();
+    }
+
+    public List<PlayerRanking> getPlayersRanking(String type) throws TopGamesException {
+        HttpUrl.Builder urlBuilder = baseUrl.newBuilder()
+                .addPathSegment("servers")
+                .addPathSegment(this.apiKey)
+                .addPathSegment("players-ranking");
+        
+        if (type != null) {
+            urlBuilder.addQueryParameter("type", type);
+        }
+
+        Request request = new Request.Builder().url(urlBuilder.build()).get().build();
+        Type responseType = new TypeToken<ApiResponse<List<PlayerRanking>>>() {}.getType();
+        ApiResponse<List<PlayerRanking>> response = execute(request, responseType);
+        return response.getData();
+    }
+
+    public boolean checkVoteByIP(String ip) throws TopGamesException {
+        HttpUrl url = baseUrl.newBuilder()
+                .addPathSegment("votes")
+                .addPathSegment("check-ip")
+                .addQueryParameter("server_token", this.apiKey)
+                .addQueryParameter("ip", ip)
+                .build();
+        Request request = new Request.Builder().url(url).get().build();
+        ApiResponse<Object> response = execute(request, new TypeToken<ApiResponse<Object>>(){}.getType());
+        return response.isSuccess();
+    }
+    
+    public CompletableFuture<Boolean> checkVoteByUsernameAsync(String username) {
+        HttpUrl url = baseUrl.newBuilder()
+                .addPathSegment("votes")
+                .addPathSegment("check")
+                .addQueryParameter("server_token", this.apiKey)
+                .addQueryParameter("playername", username)
+                .build();
+        Request request = new Request.Builder().url(url).get().build();
+        
+        CompletableFuture<ApiResponse<Object>> future = executeAsync(request, new TypeToken<ApiResponse<Object>>(){}.getType());
+        return future.thenApply(response -> response.isSuccess());
+    }
+    
+    private static class ApiResponse<T> {
+        private int code;
+        private boolean success;
+        private String message;
+        private T votes;
+        private T server;
+        private T stats;
+        private T players;
+
+        public boolean isSuccess() { return success; }
+        
+        public T getData() {
+            if (votes != null) return votes;
+            if (server != null) return server;
+            if (stats != null) return stats;
+            if (players != null) return players;
+            return null;
+        }
     }
 }

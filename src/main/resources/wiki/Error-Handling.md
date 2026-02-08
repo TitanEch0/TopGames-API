@@ -14,10 +14,10 @@ The exception message usually contains the HTTP status code and the error body r
 
 ```java
 try {
-    client.getGame("123");
+    client.getServerInfo();
 } catch (TopGamesException e) {
     if (e.getMessage().contains("404")) {
-        System.out.println("Game not found.");
+        System.out.println("Server not found.");
     } else if (e.getMessage().contains("401")) {
         System.out.println("Invalid API Key.");
     } else {
@@ -31,7 +31,7 @@ try {
 In async mode, the `TopGamesException` is wrapped inside a `CompletionException` or `ExecutionException`.
 
 ```java
-client.getGameAsync("123").exceptionally(ex -> {
+client.getServerInfoAsync().exceptionally(ex -> {
     // ex is likely a CompletionException
     Throwable cause = ex.getCause(); 
     if (cause instanceof TopGamesException) {

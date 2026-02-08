@@ -1,6 +1,6 @@
 # Welcome to the TopGames-API Java Client Wiki
 
-This is the official documentation for the **TopGames-API** Java library. This library provides a modern, thread-safe, and feature-rich wrapper around the Top-Games REST API.
+This is the official documentation for the **TopGames-API** Java library (v1.1.0). This library provides a modern, thread-safe, and feature-rich wrapper around the Top-Games REST API.
 
 ## Key Features
 
@@ -9,11 +9,14 @@ This is the official documentation for the **TopGames-API** Java library. This l
 *   **🚦 Good Citizen:** Client-side rate limiting to respect API quotas.
 *   **⚡ Async First:** First-class support for asynchronous programming using Java's `CompletableFuture`.
 *   **🔧 Highly Configurable:** Fluent Builder pattern for easy configuration.
+*   **📊 Comprehensive:** Supports retrieving server info, stats, player rankings, and vote management.
 
 ## Quick Links
 
 *   [[Installation]] - How to add the library to your project.
 *   [[Getting Started]] - Your first API call.
+*   [[Server Information]] - Retrieve server details, stats, and rankings.
+*   [[Vote Management]] - Check, list, and claim votes.
 *   [[Configuration]] - Advanced features like Caching, Retries, and Rate Limiting.
 *   [[Async Usage]] - How to use non-blocking methods.
 *   [[Error Handling]] - Dealing with exceptions and resource management.

@@ -5,9 +5,9 @@ For non-blocking applications (like UI apps or high-throughput servers), every A
 ## Basic Async Call
 
 ```java
-client.getGameAsync("123")
-    .thenAccept(game -> {
-        System.out.println("Loaded: " + game.getName());
+client.getUnclaimedVotesAsync()
+    .thenAccept(votes -> {
+        System.out.println("Found " + votes.size() + " new votes.");
     });
 ```
 
@@ -16,8 +16,8 @@ client.getGameAsync("123")
 Use `exceptionally` to handle errors that occur during the async execution.
 
 ```java
-client.getGameAsync("invalid-id")
-    .thenAccept(game -> System.out.println(game.getName()))
+client.getServerInfoAsync()
+    .thenAccept(server -> System.out.println(server.getName()))
     .exceptionally(ex -> {
         System.err.println("Something went wrong: " + ex.getMessage());
         return null;
@@ -26,15 +26,24 @@ client.getGameAsync("invalid-id")
 
 ## Chaining Requests
 
-You can easily chain multiple requests. For example, fetch a list of top games, then fetch details for the first one.
+You can easily chain multiple requests. For example, check a vote and then claim it if valid.
 
 ```java
-client.getTopGamesAsync(10, 0)
-    .thenCompose(games -> {
-        String firstGameId = games.get(0).getId();
-        return client.getGameAsync(firstGameId);
+String username = "PlayerOne";
+
+client.checkVoteByUsernameAsync(username)
+    .thenCompose(hasVoted -> {
+        if (hasVoted) {
+            return client.claimVoteByUsernameAsync(username);
+        } else {
+            throw new RuntimeException("Player has not voted");
+        }
     })
-    .thenAccept(gameDetails -> {
-        System.out.println("Details of #1 Game: " + gameDetails.getDescription());
+    .thenRun(() -> {
+        System.out.println("Vote verified and claimed!");
+    })
+    .exceptionally(ex -> {
+        System.err.println("Process failed: " + ex.getMessage());
+        return null;
     });
 ```
