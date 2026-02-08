@@ -1,9 +1,5 @@
 # TopGames API Java Client
 
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/YOUR_USERNAME/TopGames-API)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Maven Central](https://img.shields.io/maven-central/v/xyz.titanecho.topgamesapi/TopGames-API.svg?label=Maven%20Central)](https://search.maven.org/artifact/xyz.titanecho.topgamesapi/TopGames-API)
-
 A modern, robust, and feature-rich Java client for the Top-Games API. This library is designed for high performance and resilience, making it suitable for production environments.
 
 ## Features
@@ -21,13 +17,13 @@ A modern, robust, and feature-rich Java client for the Top-Games API. This libra
 
 ### Maven
 
-1.  Add the repository to your `pom.xml` (if not on Maven Central). For GitHub Packages, for example:
+1.  Add the GitHub Packages repository to your `pom.xml`:
     ```xml
     <repositories>
         <repository>
             <id>github</id>
-            <name>GitHub YOUR_USERNAME Apache Maven Packages</name>
-            <url>https://maven.pkg.github.com/YOUR_USERNAME/TopGames-API</url>
+            <name>GitHub TitanEch0 Apache Maven Packages</name>
+            <url>https://maven.pkg.github.com/TitanEch0/TopGames-API</url>
         </repository>
     </repositories>
     ```
@@ -35,11 +31,13 @@ A modern, robust, and feature-rich Java client for the Top-Games API. This libra
 2.  Add the dependency to your `pom.xml`:
     ```xml
     <dependency>
-        <groupId>xyz.titanecho.topgamesapi</groupId>
-        <artifactId>TopGames-API</artifactId>
-        <version>1.0.0</version>
+        <groupId>io.github.titanech0</groupId>
+        <artifactId>topgames-api</artifactId>
+        <version>1.0.5</version>
     </dependency>
     ```
+
+    *Note: You need to authenticate with GitHub Packages in your `settings.xml` to download the artifact.*
 
 ## Usage
 
@@ -131,23 +129,6 @@ try (TopGamesClient client = new TopGamesClient.Builder().apiKey("YOUR_API_KEY")
 }
 ```
 
-## Building From Source
-
-To build the project and install the artifacts into your local Maven repository:
-
-```bash
-mvn clean install
-```
-
-To create the distributable JARs and the local repository for deployment:
-
-```bash
-mvn deploy
-```
-
-This will generate the artifacts in the `target/mvn-repo` directory.
-
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-```
