@@ -12,7 +12,7 @@ A modern, robust, and feature-rich Java client for the Top-Games API. This libra
 ## Features
 
 - **Fluent Builder**: Simple and readable client configuration.
-- **Sync & Async API**: Both blocking and non-blocking (`CompletableFuture`) methods are available.
+- **Sync & Async API**: Both blocking and non-blocking (`Callback`) methods are available.
 - **HTTP Caching**: Reduces latency and saves API quota by caching responses.
 - **Automatic Retries**: Automatically retries requests on transient network or server errors with exponential backoff.
 - **Rate Limiting**: Client-side rate limiting to prevent hitting API limits and ensure fair usage.
@@ -40,7 +40,7 @@ A modern, robust, and feature-rich Java client for the Top-Games API. This libra
     <dependency>
         <groupId>io.github.titanech0</groupId>
         <artifactId>topgames-api</artifactId>
-        <version>1.0.5</version>
+        <version>1.1.3</version>
     </dependency>
     ```
 
@@ -54,16 +54,16 @@ Create a client and make your first API call.
 
 ```java
 import xyz.titanecho.topgamesapi.TopGamesClient;
-import xyz.titanecho.topgamesapi.model.Game;
+import xyz.titanecho.topgamesapi.model.Server;
 import xyz.titanecho.topgamesapi.TopGamesException;
 
 // Use try-with-resources for automatic resource management
 try (TopGamesClient client = new TopGamesClient.Builder()
-        .apiKey("YOUR_API_KEY")
+        .apiKey("YOUR_SERVER_TOKEN")
         .build()) {
 
-    Game game = client.getGame("123");
-    System.out.println("Fetched Game: " + game.getName());
+    Server server = client.getServerInfo();
+    System.out.println("Fetched Server: " + server.getName());
 
 } catch (TopGamesException e) {
     System.err.println("API call failed: " + e.getMessage());
@@ -77,40 +77,20 @@ The builder allows you to enable and configure all advanced features.
 ```java
 import java.io.File;
 import java.time.Duration;
-import java.util.concurrent.TimeUnit;
-
-// ...
 
 File cacheDir = new File("./cache");
 
 try (TopGamesClient advancedClient = new TopGamesClient.Builder()
-        // Required: Your API Key
-        .apiKey("YOUR_API_KEY")
-
-        // --- Optional Features ---
-
-        // Enable automatic retries on transient errors (up to 3 times)
+        .apiKey("YOUR_SERVER_TOKEN")
         .enableRetries(3)
-
-        // Enforce a rate limit (e.g., 5 requests per second)
         .rateLimit(5, Duration.ofSeconds(1))
-
-        // Enable HTTP caching (10 MB in the specified directory)
-        .enableHttpCache(cacheDir, 10)
-
-        // Enable detailed HTTP logging for debugging
+        .enableHttpCache(cacheDir, 10) // 10 MB cache
         .enableDebugLogging()
-        
-        // Add a custom interceptor for metrics or tracing
-        .addInterceptor(chain -> {
-            System.out.println("Custom interceptor processing request to: " + chain.request().url());
-            return chain.proceed(chain.request());
-        })
         .build()) {
-
+    
     // All requests made with this client will now use these features
-    var topGames = advancedClient.getTopGames(10, 0);
-    System.out.println("Fetched " + topGames.size() + " top games.");
+    var topGames = advancedClient.getPlayersRanking("current");
+    System.out.println("Fetched " + topGames.size() + " players in ranking.");
 
 } catch (TopGamesException e) {
     e.printStackTrace();
@@ -119,21 +99,23 @@ try (TopGamesClient advancedClient = new TopGamesClient.Builder()
 
 ### 3. Asynchronous Usage
 
-API calls can be made asynchronously using `CompletableFuture`.
+API calls can be made asynchronously using a `TopGamesCallback`.
 
 ```java
-try (TopGamesClient client = new TopGamesClient.Builder().apiKey("YOUR_API_KEY").build()) {
+import xyz.titanecho.topgamesapi.TopGamesCallback;
+import java.util.List;
 
-    client.getGameAsync("456")
-          .thenAccept(game -> System.out.println("Async fetched game: " + game.getName()))
-          .exceptionally(ex -> {
-              System.err.println("Async call failed: " + ex.getMessage());
-              return null;
-          });
+client.getUnclaimedVotesAsync(new TopGamesCallback<List<Vote>>() {
+    @Override
+    public void onSuccess(List<Vote> votes) {
+        System.out.println("Successfully fetched " + votes.size() + " votes.");
+    }
 
-    // Keep the application alive to see the result
-    Thread.sleep(2000);
-}
+    @Override
+    public void onFailure(Exception e) {
+        System.err.println("Failed to fetch votes: " + e.getMessage());
+    }
+});
 ```
 
 ## License
