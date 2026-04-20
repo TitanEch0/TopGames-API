@@ -1,6 +1,12 @@
 package xyz.titanecho.topgamesapi;
 
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonDeserializationContext;
+import com.google.gson.JsonDeserializer;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
 import com.google.gson.JsonSyntaxException;
 import com.google.gson.reflect.TypeToken;
 import okhttp3.Cache;
@@ -8,16 +14,16 @@ import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.HttpUrl;
 import okhttp3.Interceptor;
-import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import okhttp3.ResponseBody;
 import okhttp3.logging.HttpLoggingInterceptor;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import xyz.titanecho.topgamesapi.model.Game;
+import xyz.titanecho.topgamesapi.model.Advice;
 import xyz.titanecho.topgamesapi.model.PlayerRanking;
 import xyz.titanecho.topgamesapi.model.Server;
 import xyz.titanecho.topgamesapi.model.Stat;
@@ -26,14 +32,13 @@ import xyz.titanecho.topgamesapi.model.Vote;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
 
 /**
  * The main client for interacting with the Top-Games API.
@@ -51,8 +56,11 @@ public class TopGamesClient implements Closeable {
     private TopGamesClient(Builder builder) {
         this.baseUrl = Objects.requireNonNull(HttpUrl.parse(builder.baseUrl), "Base URL must be a valid URL");
         this.apiKey = builder.apiKey;
-        this.gson = new Gson();
         this.rateLimitInterceptor = builder.rateLimitInterceptor;
+
+        GsonBuilder gsonBuilder = new GsonBuilder();
+        gsonBuilder.registerTypeAdapter(ApiResponse.class, new ApiResponseDeserializer());
+        this.gson = gsonBuilder.create();
 
         OkHttpClient.Builder clientBuilder = new OkHttpClient.Builder()
                 .connectTimeout(builder.connectTimeout, builder.connectTimeoutUnit)
@@ -148,14 +156,6 @@ public class TopGamesClient implements Closeable {
 
         public TopGamesClient build() {
             Objects.requireNonNull(apiKey, "API key must be set");
-            customInterceptors.add(chain -> {
-                Request original = chain.request();
-                Request authenticated = original.newBuilder()
-                        .header("Authorization", "Bearer " + apiKey)
-                        .header("Accept", "application/json")
-                        .build();
-                return chain.proceed(authenticated);
-            });
             return new TopGamesClient(this);
         }
     }
@@ -170,238 +170,349 @@ public class TopGamesClient implements Closeable {
         }
     }
 
-    private <T> CompletableFuture<T> executeAsync(Request request, Type typeOfT) {
+    private <T> void executeAsync(Request request, Type typeOfT, TopGamesCallback<T> callback) {
         log.debug("Executing asynchronous request: {} {}", request.method(), request.url());
-        CompletableFuture<T> future = new CompletableFuture<>();
         client.newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(@NotNull Call call, @NotNull IOException e) {
                 log.error("Async network error for request: {}", request.url(), e);
-                future.completeExceptionally(new TopGamesException("Network error occurred", e));
+                callback.onFailure(new TopGamesException("Network error occurred", e));
             }
 
             @Override
             public void onResponse(@NotNull Call call, @NotNull Response response) {
                 try {
                     T result = handleResponse(response, typeOfT);
-                    future.complete(result);
+                    callback.onSuccess(result);
                 } catch (Exception e) {
-                    future.completeExceptionally(e);
-                } finally {
-                    response.close();
+                    callback.onFailure(e);
                 }
             }
         });
-        return future;
     }
 
     private <T> T handleResponse(Response response, Type typeOfT) throws TopGamesException, IOException {
-        if (!response.isSuccessful()) {
-            String errorBody = response.body() != null ? response.body().string() : "No error body";
-            log.warn("API Error on {}: {} - {}", response.request().url(), response.code(), errorBody);
-            throw new TopGamesException("API Error: " + response.code() + " - " + errorBody);
-        }
+        try (ResponseBody body = response.body()) {
+            String responseBody = body != null ? body.string() : null;
 
-        log.debug("Successfully received response for: {}", response.request().url());
-        if (response.body() == null) {
-            if (typeOfT == Void.class) {
-                return null;
+            if (!response.isSuccessful()) {
+                String errorBody = responseBody != null ? responseBody : "No error body";
+                log.warn("API Error on {}: {} - {}", response.request().url(), response.code(), errorBody);
+                throw new TopGamesException("API Error: " + response.code() + " - " + errorBody);
             }
-            throw new TopGamesException("Response body is null");
+
+            log.debug("Successfully received response for: {}", response.request().url());
+            if (responseBody == null || responseBody.isEmpty()) {
+                if (typeOfT == Void.class) {
+                    return null;
+                }
+                throw new TopGamesException("Response body is null");
+            }
+
+            try {
+                return gson.fromJson(responseBody, typeOfT);
+            } catch (JsonSyntaxException e) {
+                log.error("Failed to parse JSON for request: {}", response.request().url(), e);
+                throw new TopGamesException("Failed to parse JSON response", e);
+            }
         }
+    }
 
-        try {
-            return gson.fromJson(response.body().string(), typeOfT);
-        } catch (JsonSyntaxException e) {
-            log.error("Failed to parse JSON for request: {}", response.request().url(), e);
-            throw new TopGamesException("Failed to parse JSON response", e);
+    private HttpUrl.Builder buildAuthenticatedUrl(String... pathSegments) {
+        HttpUrl.Builder builder = baseUrl.newBuilder();
+        for (String segment : pathSegments) {
+            builder.addPathSegment(segment);
         }
+        builder.addQueryParameter("server_token", this.apiKey);
+        return builder;
     }
 
-    public Game getGame(String id) throws TopGamesException {
-        HttpUrl url = baseUrl.newBuilder().addPathSegment("games").addPathSegment(id).build();
-        Request request = new Request.Builder().url(url).get().build();
-        return execute(request, Game.class);
-    }
-
-    public CompletableFuture<Game> getGameAsync(String id) {
-        HttpUrl url = baseUrl.newBuilder().addPathSegment("games").addPathSegment(id).build();
-        Request request = new Request.Builder().url(url).get().build();
-        return executeAsync(request, Game.class);
-    }
-
-    public List<Game> getTopGames(int limit, int offset) throws TopGamesException {
-        HttpUrl url = baseUrl.newBuilder()
-                .addPathSegment("games")
-                .addPathSegment("top")
-                .addQueryParameter("limit", String.valueOf(limit))
-                .addQueryParameter("offset", String.valueOf(offset))
+    private Request buildAuthenticatedRequest(HttpUrl url) {
+        return new Request.Builder()
+                .url(url)
+                .header("Accept", "application/json")
                 .build();
-        Request request = new Request.Builder().url(url).get().build();
-        Type listType = new TypeToken<List<Game>>() {}.getType();
-        return execute(request, listType);
-    }
-
-    public CompletableFuture<List<Game>> getTopGamesAsync(int limit, int offset) {
-        HttpUrl url = baseUrl.newBuilder()
-                .addPathSegment("games")
-                .addPathSegment("top")
-                .addQueryParameter("limit", String.valueOf(limit))
-                .addQueryParameter("offset", String.valueOf(offset))
-                .build();
-        Request request = new Request.Builder().url(url).get().build();
-        Type listType = new TypeToken<List<Game>>() {}.getType();
-        return executeAsync(request, listType);
     }
 
     public List<Vote> getUnclaimedVotes() throws TopGamesException {
-         HttpUrl url = baseUrl.newBuilder()
-                .addPathSegment("votes")
-                .addPathSegment("last")
-                .addQueryParameter("server_token", this.apiKey)
-                .build();
-
-        Request request = new Request.Builder().url(url).get().build();
-        
+        HttpUrl url = buildAuthenticatedUrl("votes", "last").build();
+        Request request = buildAuthenticatedRequest(url);
         Type responseType = new TypeToken<ApiResponse<List<Vote>>>() {}.getType();
         ApiResponse<List<Vote>> response = execute(request, responseType);
         return response.getData();
     }
 
-    public CompletableFuture<List<Vote>> getUnclaimedVotesAsync() {
-         HttpUrl url = baseUrl.newBuilder()
-                .addPathSegment("votes")
-                .addPathSegment("last")
-                .addQueryParameter("server_token", this.apiKey)
-                .build();
-        Request request = new Request.Builder().url(url).get().build();
-        
+    public void getUnclaimedVotesAsync(TopGamesCallback<List<Vote>> callback) {
+        HttpUrl url = buildAuthenticatedUrl("votes", "last").build();
+        Request request = buildAuthenticatedRequest(url);
         Type responseType = new TypeToken<ApiResponse<List<Vote>>>() {}.getType();
-        CompletableFuture<ApiResponse<List<Vote>>> future = executeAsync(request, responseType);
-        return future.thenApply(response -> response.getData());
+        executeAsync(request, responseType, new TopGamesCallback<ApiResponse<List<Vote>>>() {
+            @Override
+            public void onSuccess(ApiResponse<List<Vote>> result) {
+                callback.onSuccess(result.getData());
+            }
+            @Override
+            public void onFailure(Exception e) {
+                callback.onFailure(e);
+            }
+        });
     }
 
-    public void claimVote(String voteId) throws TopGamesException {
-        throw new UnsupportedOperationException("Use claimVoteByUsername or claimVoteBySteamId instead.");
-    }
-    
     public void claimVoteByUsername(String username) throws TopGamesException {
-        HttpUrl url = baseUrl.newBuilder()
-                .addPathSegment("votes")
-                .addPathSegment("claim-username")
-                .addQueryParameter("server_token", this.apiKey)
+        HttpUrl url = buildAuthenticatedUrl("votes", "claim-username")
                 .addQueryParameter("playername", username)
                 .build();
-        
-        Request request = new Request.Builder().url(url).get().build();
+        Request request = new Request.Builder().url(url).post(RequestBody.create(new byte[0])).build();
         execute(request, Void.class);
+    }
+
+    public void claimVoteByUsernameAsync(String username, TopGamesCallback<Void> callback) {
+        HttpUrl url = buildAuthenticatedUrl("votes", "claim-username")
+                .addQueryParameter("playername", username)
+                .build();
+        Request request = new Request.Builder().url(url).post(RequestBody.create(new byte[0])).build();
+        executeAsync(request, Void.class, callback);
     }
 
     public void claimVoteBySteamId(String steamId) throws TopGamesException {
-        HttpUrl url = baseUrl.newBuilder()
-                .addPathSegment("votes")
-                .addPathSegment("claim-steam")
-                .addQueryParameter("server_token", this.apiKey)
+        HttpUrl url = buildAuthenticatedUrl("votes", "claim-steam")
                 .addQueryParameter("steam_id", steamId)
                 .build();
-
-        Request request = new Request.Builder().url(url).get().build();
+        Request request = new Request.Builder().url(url).post(RequestBody.create(new byte[0])).build();
         execute(request, Void.class);
     }
 
-    public Server getServerInfo() throws TopGamesException {
-        HttpUrl url = baseUrl.newBuilder()
-                .addPathSegment("servers")
-                .addPathSegment(this.apiKey)
+    public void claimVoteBySteamIdAsync(String steamId, TopGamesCallback<Void> callback) {
+        HttpUrl url = buildAuthenticatedUrl("votes", "claim-steam")
+                .addQueryParameter("steam_id", steamId)
                 .build();
-        Request request = new Request.Builder().url(url).get().build();
+        Request request = new Request.Builder().url(url).post(RequestBody.create(new byte[0])).build();
+        executeAsync(request, Void.class, callback);
+    }
+
+    public Server getServerInfo() throws TopGamesException {
+        HttpUrl url = baseUrl.newBuilder().addPathSegment("servers").addPathSegment(this.apiKey).build();
+        Request request = buildAuthenticatedRequest(url);
         Type responseType = new TypeToken<ApiResponse<Server>>() {}.getType();
         ApiResponse<Server> response = execute(request, responseType);
         return response.getData();
+    }
+
+    public void getServerInfoAsync(TopGamesCallback<Server> callback) {
+        HttpUrl url = baseUrl.newBuilder().addPathSegment("servers").addPathSegment(this.apiKey).build();
+        Request request = buildAuthenticatedRequest(url);
+        Type responseType = new TypeToken<ApiResponse<Server>>() {}.getType();
+        executeAsync(request, responseType, new TopGamesCallback<ApiResponse<Server>>() {
+            @Override
+            public void onSuccess(ApiResponse<Server> result) {
+                callback.onSuccess(result.getData());
+            }
+            @Override
+            public void onFailure(Exception e) {
+                callback.onFailure(e);
+            }
+        });
     }
 
     public Server getFullServerInfo() throws TopGamesException {
-        HttpUrl url = baseUrl.newBuilder()
-                .addPathSegment("servers")
-                .addPathSegment(this.apiKey)
-                .addPathSegment("full")
-                .build();
-        Request request = new Request.Builder().url(url).get().build();
+        HttpUrl url = baseUrl.newBuilder().addPathSegment("servers").addPathSegment(this.apiKey).addPathSegment("full").build();
+        Request request = buildAuthenticatedRequest(url);
         Type responseType = new TypeToken<ApiResponse<Server>>() {}.getType();
         ApiResponse<Server> response = execute(request, responseType);
         return response.getData();
     }
 
+    public void getFullServerInfoAsync(TopGamesCallback<Server> callback) {
+        HttpUrl url = baseUrl.newBuilder().addPathSegment("servers").addPathSegment(this.apiKey).addPathSegment("full").build();
+        Request request = buildAuthenticatedRequest(url);
+        Type responseType = new TypeToken<ApiResponse<Server>>() {}.getType();
+        executeAsync(request, responseType, new TopGamesCallback<ApiResponse<Server>>() {
+            @Override
+            public void onSuccess(ApiResponse<Server> result) {
+                callback.onSuccess(result.getData());
+            }
+            @Override
+            public void onFailure(Exception e) {
+                callback.onFailure(e);
+            }
+        });
+    }
+
     public List<Stat> getServerStats() throws TopGamesException {
-        HttpUrl url = baseUrl.newBuilder()
-                .addPathSegment("servers")
-                .addPathSegment(this.apiKey)
-                .addPathSegment("stats")
-                .build();
-        Request request = new Request.Builder().url(url).get().build();
+        HttpUrl url = baseUrl.newBuilder().addPathSegment("servers").addPathSegment(this.apiKey).addPathSegment("stats").build();
+        Request request = buildAuthenticatedRequest(url);
         Type responseType = new TypeToken<ApiResponse<List<Stat>>>() {}.getType();
         ApiResponse<List<Stat>> response = execute(request, responseType);
         return response.getData();
     }
 
+    public void getServerStatsAsync(TopGamesCallback<List<Stat>> callback) {
+        HttpUrl url = baseUrl.newBuilder().addPathSegment("servers").addPathSegment(this.apiKey).addPathSegment("stats").build();
+        Request request = buildAuthenticatedRequest(url);
+        Type responseType = new TypeToken<ApiResponse<List<Stat>>>() {}.getType();
+        executeAsync(request, responseType, new TopGamesCallback<ApiResponse<List<Stat>>>() {
+            @Override
+            public void onSuccess(ApiResponse<List<Stat>> result) {
+                callback.onSuccess(result.getData());
+            }
+            @Override
+            public void onFailure(Exception e) {
+                callback.onFailure(e);
+            }
+        });
+    }
+
     public List<PlayerRanking> getPlayersRanking(String type) throws TopGamesException {
-        HttpUrl.Builder urlBuilder = baseUrl.newBuilder()
-                .addPathSegment("servers")
-                .addPathSegment(this.apiKey)
-                .addPathSegment("players-ranking");
-        
+        HttpUrl.Builder urlBuilder = baseUrl.newBuilder().addPathSegment("servers").addPathSegment(this.apiKey).addPathSegment("players-ranking");
         if (type != null) {
             urlBuilder.addQueryParameter("type", type);
         }
-
-        Request request = new Request.Builder().url(urlBuilder.build()).get().build();
+        Request request = buildAuthenticatedRequest(urlBuilder.build());
         Type responseType = new TypeToken<ApiResponse<List<PlayerRanking>>>() {}.getType();
         ApiResponse<List<PlayerRanking>> response = execute(request, responseType);
         return response.getData();
     }
 
+    public void getPlayersRankingAsync(String type, TopGamesCallback<List<PlayerRanking>> callback) {
+        HttpUrl.Builder urlBuilder = baseUrl.newBuilder().addPathSegment("servers").addPathSegment(this.apiKey).addPathSegment("players-ranking");
+        if (type != null) {
+            urlBuilder.addQueryParameter("type", type);
+        }
+        Request request = buildAuthenticatedRequest(urlBuilder.build());
+        Type responseType = new TypeToken<ApiResponse<List<PlayerRanking>>>() {}.getType();
+        executeAsync(request, responseType, new TopGamesCallback<ApiResponse<List<PlayerRanking>>>() {
+            @Override
+            public void onSuccess(ApiResponse<List<PlayerRanking>> result) {
+                callback.onSuccess(result.getData());
+            }
+            @Override
+            public void onFailure(Exception e) {
+                callback.onFailure(e);
+            }
+        });
+    }
+
     public boolean checkVoteByIP(String ip) throws TopGamesException {
-        HttpUrl url = baseUrl.newBuilder()
-                .addPathSegment("votes")
-                .addPathSegment("check-ip")
-                .addQueryParameter("server_token", this.apiKey)
+        HttpUrl url = buildAuthenticatedUrl("votes", "check-ip")
                 .addQueryParameter("ip", ip)
                 .build();
-        Request request = new Request.Builder().url(url).get().build();
+        Request request = buildAuthenticatedRequest(url);
+        ApiResponse<Object> response = execute(request, new TypeToken<ApiResponse<Object>>(){}.getType());
+        return response.isSuccess();
+    }
+
+    public void checkVoteByIPAsync(String ip, TopGamesCallback<Boolean> callback) {
+        HttpUrl url = buildAuthenticatedUrl("votes", "check-ip")
+                .addQueryParameter("ip", ip)
+                .build();
+        Request request = buildAuthenticatedRequest(url);
+        Type responseType = new TypeToken<ApiResponse<Object>>(){}.getType();
+        executeAsync(request, responseType, new TopGamesCallback<ApiResponse<Object>>() {
+            @Override
+            public void onSuccess(ApiResponse<Object> result) {
+                callback.onSuccess(result.isSuccess());
+            }
+            @Override
+            public void onFailure(Exception e) {
+                callback.onFailure(e);
+            }
+        });
+    }
+
+    public boolean checkVoteByUsername(String username) throws TopGamesException {
+        HttpUrl url = buildAuthenticatedUrl("votes", "check")
+                .addQueryParameter("playername", username)
+                .build();
+        Request request = buildAuthenticatedRequest(url);
         ApiResponse<Object> response = execute(request, new TypeToken<ApiResponse<Object>>(){}.getType());
         return response.isSuccess();
     }
     
-    public CompletableFuture<Boolean> checkVoteByUsernameAsync(String username) {
-        HttpUrl url = baseUrl.newBuilder()
-                .addPathSegment("votes")
-                .addPathSegment("check")
-                .addQueryParameter("server_token", this.apiKey)
+    public void checkVoteByUsernameAsync(String username, TopGamesCallback<Boolean> callback) {
+        HttpUrl url = buildAuthenticatedUrl("votes", "check")
                 .addQueryParameter("playername", username)
                 .build();
-        Request request = new Request.Builder().url(url).get().build();
+        Request request = buildAuthenticatedRequest(url);
         
-        CompletableFuture<ApiResponse<Object>> future = executeAsync(request, new TypeToken<ApiResponse<Object>>(){}.getType());
-        return future.thenApply(response -> response.isSuccess());
+        Type apiResponseType = new TypeToken<ApiResponse<Object>>(){}.getType();
+        executeAsync(request, apiResponseType, new TopGamesCallback<ApiResponse<Object>>() {
+            @Override
+            public void onSuccess(ApiResponse<Object> result) {
+                callback.onSuccess(result.isSuccess());
+            }
+            @Override
+            public void onFailure(Exception e) {
+                callback.onFailure(e);
+            }
+        });
+    }
+
+    public List<Advice> getServerAdvices() throws TopGamesException {
+        HttpUrl url = baseUrl.newBuilder().addPathSegment("servers").addPathSegment(this.apiKey).addPathSegment("advices").build();
+        Request request = buildAuthenticatedRequest(url);
+        Type responseType = new TypeToken<ApiResponse<List<Advice>>>() {}.getType();
+        ApiResponse<List<Advice>> response = execute(request, responseType);
+        return response.getData();
+    }
+
+    public void getServerAdvicesAsync(TopGamesCallback<List<Advice>> callback) {
+        HttpUrl url = baseUrl.newBuilder().addPathSegment("servers").addPathSegment(this.apiKey).addPathSegment("advices").build();
+        Request request = buildAuthenticatedRequest(url);
+        Type responseType = new TypeToken<ApiResponse<List<Advice>>>() {}.getType();
+        executeAsync(request, responseType, new TopGamesCallback<ApiResponse<List<Advice>>>() {
+            @Override
+            public void onSuccess(ApiResponse<List<Advice>> result) {
+                callback.onSuccess(result.getData());
+            }
+            @Override
+            public void onFailure(Exception e) {
+                callback.onFailure(e);
+            }
+        });
     }
     
+    // --- Helper Classes ---
+
     private static class ApiResponse<T> {
-        private int code;
         private boolean success;
         private String message;
-        private T votes;
-        private T server;
-        private T stats;
-        private T players;
+        private T data;
 
         public boolean isSuccess() { return success; }
-        
-        public T getData() {
-            if (votes != null) return votes;
-            if (server != null) return server;
-            if (stats != null) return stats;
-            if (players != null) return players;
-            return null;
+        public T getData() { return data; }
+        public void setSuccess(boolean success) { this.success = success; }
+        public void setMessage(String message) { this.message = message; }
+        public void setData(T data) { this.data = data; }
+    }
+
+    private static class ApiResponseDeserializer implements JsonDeserializer<ApiResponse<?>> {
+        @Override
+        public ApiResponse<?> deserialize(JsonElement json, Type typeOfT, JsonDeserializationContext context) throws JsonParseException {
+            JsonObject jsonObject = json.getAsJsonObject();
+            ApiResponse<Object> response = new ApiResponse<>();
+            
+            if (jsonObject.has("success")) {
+                response.setSuccess(jsonObject.get("success").getAsBoolean());
+            }
+            if (jsonObject.has("message")) {
+                response.setMessage(jsonObject.get("message").getAsString());
+            }
+
+            if (!(typeOfT instanceof ParameterizedType)) {
+                return response;
+            }
+
+            Type dataType = ((ParameterizedType) typeOfT).getActualTypeArguments()[0];
+
+            String[] dataKeys = {"votes", "server", "stats", "players", "advices"};
+            for (String key : dataKeys) {
+                if (jsonObject.has(key)) {
+                    response.setData(context.deserialize(jsonObject.get(key), dataType));
+                    break;
+                }
+            }
+            
+            return response;
         }
     }
 }

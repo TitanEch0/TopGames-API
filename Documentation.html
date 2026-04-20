@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TopGames-API Java Client Documentation</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1, h2, h3 {
+            color: #2c3e50;
+            margin-top: 1.5em;
+        }
+        h1 {
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+            text-align: center;
+        }
+        h2 {
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+        }
+        code {
+            background-color: #f8f9fa;
+            padding: 2px 4px;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            color: #e74c3c;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #e1e4e8;
+            overflow-x: auto;
+        }
+        pre code {
+            background-color: transparent;
+            color: #333;
+            padding: 0;
+        }
+        .note {
+            background-color: #e8f4f8;
+            border-left: 4px solid #3498db;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        .footer {
+            margin-top: 50px;
+            text-align: center;
+            font-size: 0.9em;
+            color: #7f8c8d;
+            border-top: 1px solid #eee;
+            padding-top: 20px;
+        }
+        @media print {
+            body {
+                font-size: 12pt;
+            }
+            pre {
+                white-space: pre-wrap;
+            }
+            a {
+                text-decoration: none;
+                color: #000;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>TopGames-API Java Client</h1>
+    <p style="text-align: center;">Version 1.1.0</p>
+
+    <h2>1. Introduction</h2>
+    <p>
+        The <strong>TopGames-API Java Client</strong> is a robust, thread-safe, and feature-rich library designed to interact with the Top-Games.net REST API.
+        It simplifies the integration of voting systems, server statistics retrieval, and player ranking analysis into your Java applications.
+    </p>
+
+    <h3>Key Features</h3>
+    <ul>
+        <li><strong>Fluent Builder API:</strong> Easy and readable configuration.</li>
+        <li><strong>Asynchronous Support:</strong> Non-blocking operations using <code>CompletableFuture</code>.</li>
+        <li><strong>Resilience:</strong> Built-in automatic retries with exponential backoff.</li>
+        <li><strong>Performance:</strong> HTTP caching and connection pooling via OkHttp.</li>
+        <li><strong>Rate Limiting:</strong> Client-side rate limiting to respect API quotas.</li>
+        <li><strong>Extensibility:</strong> Support for custom interceptors.</li>
+    </ul>
+
+    <h2>2. Installation</h2>
+    <p>Add the following dependency to your project's build configuration.</p>
+
+    <h3>Maven</h3>
+    <pre><code>&lt;repository&gt;
+    &lt;id&gt;github&lt;/id&gt;
+    &lt;name&gt;GitHub TitanEch0 Apache Maven Packages&lt;/name&gt;
+    &lt;url&gt;https://maven.pkg.github.com/TitanEch0/TopGames-API&lt;/url&gt;
+&lt;/repository&gt;
+
+&lt;dependency&gt;
+    &lt;groupId&gt;io.github.titanech0&lt;/groupId&gt;
+    &lt;artifactId&gt;topgames-api&lt;/artifactId&gt;
+    &lt;version&gt;1.1.0&lt;/version&gt;
+&lt;/dependency&gt;</code></pre>
+
+    <h2>3. Getting Started</h2>
+    <p>To start using the library, you need to instantiate the <code>TopGamesClient</code>. The only required parameter is your API Key (Server Token).</p>
+
+    <pre><code>import xyz.titanecho.topgamesapi.TopGamesClient;
+
+// Initialize the client
+TopGamesClient client = new TopGamesClient.Builder()
+    .apiKey("YOUR_SERVER_TOKEN")
+    .build();</code></pre>
+
+    <div class="note">
+        <strong>Note:</strong> The client implements <code>AutoCloseable</code>. It is recommended to use it within a try-with-resources block or call <code>close()</code> when the application shuts down to release resources.
+    </div>
+
+    <h2>4. Advanced Configuration</h2>
+    <p>The builder allows you to configure various aspects of the client to suit your needs.</p>
+
+    <pre><code>TopGamesClient client = new TopGamesClient.Builder()
+    .apiKey("YOUR_SERVER_TOKEN")
+    // Limit to 5 requests per second
+    .rateLimit(5, Duration.ofSeconds(1))
+    // Retry failed requests up to 3 times
+    .enableRetries(3)
+    // Cache responses for better performance
+    .enableHttpCache(new File("./cache"), 10) // 10 MB cache
+    // Enable detailed logging for debugging
+    .enableDebugLogging()
+    .build();</code></pre>
+
+    <h2>5. Server Information</h2>
+    <p>Retrieve information about your server, including statistics and rankings.</p>
+
+    <h3>Get Basic Info</h3>
+    <pre><code>Server server = client.getServerInfo();
+System.out.println("Name: " + server.getName());
+System.out.println("Votes: " + server.getVotes());</code></pre>
+
+    <h3>Get Full Info & Stats</h3>
+    <pre><code>Server fullInfo = client.getFullServerInfo();
+for (Stat stat : fullInfo.getStats()) {
+    System.out.println(stat.getDate() + ": " + stat.getVotes() + " votes");
+}</code></pre>
+
+    <h3>Get Player Rankings</h3>
+    <pre><code>// "current" or "lastMonth"
+List&lt;PlayerRanking&gt; ranking = client.getPlayersRanking("current");
+ranking.forEach(p -> System.out.println(p.getUsername() + ": " + p.getVotes()));</code></pre>
+
+    <h2>6. Vote Management</h2>
+    <p>Check and claim votes to reward your players.</p>
+
+    <h3>Get Unclaimed Votes</h3>
+    <pre><code>List&lt;Vote&gt; votes = client.getUnclaimedVotes();
+votes.forEach(v -> System.out.println("New vote from: " + v.getUsername()));</code></pre>
+
+    <h3>Check Vote Status</h3>
+    <pre><code>boolean hasVoted = client.checkVoteByIP("192.168.1.1");
+// or
+client.checkVoteByUsernameAsync("PlayerOne")
+      .thenAccept(voted -> System.out.println("Voted: " + voted));</code></pre>
+
+    <h3>Claim Votes</h3>
+    <pre><code>try {
+    client.claimVoteByUsername("PlayerOne");
+    // or
+    client.claimVoteBySteamId("76561198000000000");
+    System.out.println("Vote claimed!");
+} catch (TopGamesException e) {
+    System.err.println("Error: " + e.getMessage());
+}</code></pre>
+
+    <h2>7. Asynchronous Usage</h2>
+    <p>All API methods have an asynchronous counterpart (suffixed with <code>Async</code>) that returns a <code>CompletableFuture</code>.</p>
+
+    <pre><code>client.getServerInfoAsync()
+    .thenAccept(server -> {
+        System.out.println("Async loaded: " + server.getName());
+    })
+    .exceptionally(ex -> {
+        ex.printStackTrace();
+        return null;
+    });</code></pre>
+
+    <h2>8. Error Handling</h2>
+    <p>The library throws a checked <code>TopGamesException</code> for all API-related errors.</p>
+    <ul>
+        <li><strong>Network Errors:</strong> Connection timeouts, DNS issues.</li>
+        <li><strong>API Errors:</strong> 4xx (Client Error) or 5xx (Server Error) HTTP responses.</li>
+        <li><strong>Parsing Errors:</strong> Invalid JSON responses.</li>
+    </ul>
+
+    <div class="footer">
+        &copy; 2026 TitanEcho. All rights reserved.
+    </div>
+
+</body>
+</html>

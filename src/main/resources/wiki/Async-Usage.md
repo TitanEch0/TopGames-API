@@ -1,49 +1,74 @@
 # Asynchronous Usage
 
-For non-blocking applications (like UI apps or high-throughput servers), every API method has an `Async` counterpart returning a `CompletableFuture`.
+For non-blocking applications (like UI apps or high-throughput servers), every API method has an `Async` counterpart. These methods do not return a value directly, but instead take a `TopGamesCallback<T>` as a parameter.
+
+## The `TopGamesCallback` Interface
+
+The callback has two methods you need to implement:
+
+- `onSuccess(T result)`: This is called when the API request completes successfully. The `result` parameter contains the requested data.
+- `onFailure(Exception e)`: This is called if any error occurs during the request, including network issues or API errors.
 
 ## Basic Async Call
 
+Here is an example of how to fetch the list of unclaimed votes asynchronously.
+
 ```java
-client.getUnclaimedVotesAsync()
-    .thenAccept(votes -> {
-        System.out.println("Found " + votes.size() + " new votes.");
-    });
+client.getUnclaimedVotesAsync(new TopGamesCallback<List<Vote>>() {
+    @Override
+    public void onSuccess(List<Vote> votes) {
+        System.out.println("Successfully fetched " + votes.size() + " votes.");
+        // Process the votes here
+    }
+
+    @Override
+    public void onFailure(Exception e) {
+        System.err.println("Failed to fetch votes: " + e.getMessage());
+        // Handle the error
+    }
+});
+
+// Your program continues to run here without waiting for the API call to finish.
 ```
 
-## Handling Errors
+## Handling Different Responses
 
-Use `exceptionally` to handle errors that occur during the async execution.
+The callback is generic, so you can use it for any asynchronous method.
 
-```java
-client.getServerInfoAsync()
-    .thenAccept(server -> System.out.println(server.getName()))
-    .exceptionally(ex -> {
-        System.err.println("Something went wrong: " + ex.getMessage());
-        return null;
-    });
-```
-
-## Chaining Requests
-
-You can easily chain multiple requests. For example, check a vote and then claim it if valid.
+### Checking a Vote
 
 ```java
-String username = "PlayerOne";
-
-client.checkVoteByUsernameAsync(username)
-    .thenCompose(hasVoted -> {
+client.checkVoteByUsernameAsync("Player1", new TopGamesCallback<Boolean>() {
+    @Override
+    public void onSuccess(Boolean hasVoted) {
         if (hasVoted) {
-            return client.claimVoteByUsernameAsync(username);
+            System.out.println("Player1 has voted!");
         } else {
-            throw new RuntimeException("Player has not voted");
+            System.out.println("Player1 has not voted yet.");
         }
-    })
-    .thenRun(() -> {
-        System.out.println("Vote verified and claimed!");
-    })
-    .exceptionally(ex -> {
-        System.err.println("Process failed: " + ex.getMessage());
-        return null;
-    });
+    }
+
+    @Override
+    public void onFailure(Exception e) {
+        // Handle the error
+    }
+});
+```
+
+### Claiming a Vote (No Return Value)
+
+For methods that don't return data (like `claimVote`), the callback type is `Void`.
+
+```java
+client.claimVoteByUsernameAsync("Player1", new TopGamesCallback<Void>() {
+    @Override
+    public void onSuccess(Void result) {
+        System.out.println("Vote for Player1 was successfully claimed.");
+    }
+
+    @Override
+    public void onFailure(Exception e) {
+        System.err.println("Could not claim vote: " + e.getMessage());
+    }
+});
 ```

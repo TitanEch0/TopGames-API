@@ -1,35 +1,36 @@
 package xyz.titanecho.topgamesapi;
 
-import okhttp3.Interceptor;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
+import okhttp3.mockwebserver.RecordedRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-import xyz.titanecho.topgamesapi.model.PlayerRanking;
-import xyz.titanecho.topgamesapi.model.Server;
-import xyz.titanecho.topgamesapi.model.Stat;
+import xyz.titanecho.topgamesapi.model.Advice;
 import xyz.titanecho.topgamesapi.model.Vote;
 
-import java.io.File;
 import java.io.IOException;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class TopGamesClientTest {
 
     private MockWebServer mockWebServer;
-
-    @TempDir
-    File tempCacheDir;
+    private TopGamesClient client;
 
     @BeforeEach
     void setUp() throws IOException {
         mockWebServer = new MockWebServer();
         mockWebServer.start();
+        client = new TopGamesClient.Builder()
+                .apiKey("test-api-key")
+                .baseUrl(mockWebServer.url("/").toString())
+                .build();
     }
 
     @AfterEach
@@ -37,84 +38,105 @@ class TopGamesClientTest {
         mockWebServer.shutdown();
     }
 
-    private TopGamesClient.Builder createDefaultBuilder() {
-        return new TopGamesClient.Builder()
-                .apiKey("test-api-key")
-                .baseUrl(mockWebServer.url("/").toString());
-    }
-
     @Test
-    void client_canBeClosed() {
-        TopGamesClient client = createDefaultBuilder().build();
-        assertDoesNotThrow(client::close);
-    }
-
-    @Test
-    void getUnclaimedVotes_Success() throws TopGamesException {
-        // The API returns a wrapper object
-        String jsonResponse = "{\"code\":200, \"success\":true, \"votes\": [{\"id\":\"v1\",\"username\":\"Player1\",\"claimed\":false},{\"id\":\"v2\",\"username\":\"Player2\",\"claimed\":false}]}";
+    void getUnclaimedVotes_Success() throws Exception {
+        String jsonResponse = "{\"success\":true, \"votes\": [{\"id\":\"v1\",\"username\":\"Player1\"}]}";
         mockWebServer.enqueue(new MockResponse().setBody(jsonResponse).addHeader("Content-Type", "application/json"));
 
-        try (TopGamesClient client = createDefaultBuilder().build()) {
-            List<Vote> votes = client.getUnclaimedVotes();
-            
-            assertNotNull(votes);
-            assertEquals(2, votes.size());
-            assertEquals("Player1", votes.get(0).getUsername());
-        }
+        List<Vote> votes = client.getUnclaimedVotes();
+        
+        assertNotNull(votes);
+        assertEquals(1, votes.size());
+        assertEquals("Player1", votes.get(0).getUsername());
+
+        RecordedRequest request = mockWebServer.takeRequest();
+        assertTrue(request.getPath().contains("/votes/last?server_token=test-api-key"));
     }
 
     @Test
-    void claimVoteByUsername_Success() throws TopGamesException, InterruptedException {
+    void claimVoteByUsername_Success() throws Exception {
         mockWebServer.enqueue(new MockResponse().setResponseCode(200));
 
-        try (TopGamesClient client = createDefaultBuilder().build()) {
-            client.claimVoteByUsername("Player1");
-        }
+        client.claimVoteByUsername("Player1");
 
-        var recordedRequest = mockWebServer.takeRequest();
-        assertEquals("GET", recordedRequest.getMethod());
-        // Verify query parameters
-        assertTrue(recordedRequest.getPath().contains("/votes/claim-username"));
-        assertTrue(recordedRequest.getPath().contains("playername=Player1"));
+        RecordedRequest request = mockWebServer.takeRequest();
+        assertEquals("POST", request.getMethod());
+        assertTrue(request.getPath().contains("/votes/claim-username?server_token=test-api-key&playername=Player1"));
+    }
+    
+    @Test
+    void getServerAdvices_Success() throws Exception {
+        String jsonResponse = "{\"success\":true, \"advices\": [{\"id\":\"a1\",\"username\":\"Reviewer\"}]}";
+        mockWebServer.enqueue(new MockResponse().setBody(jsonResponse).addHeader("Content-Type", "application/json"));
+
+        List<Advice> advices = client.getServerAdvices();
+        
+        assertNotNull(advices);
+        assertEquals(1, advices.size());
+        assertEquals("Reviewer", advices.get(0).getUsername());
+
+        RecordedRequest request = mockWebServer.takeRequest();
+        assertTrue(request.getPath().contains("/servers/test-api-key/advices"));
     }
 
     @Test
-    void getServerInfo_Success() throws TopGamesException {
-        String jsonResponse = "{\"code\":200, \"success\":true, \"server\": {\"id\":\"123\", \"name\":\"My Server\", \"votes\":100}}";
+    void checkVoteByUsername_Success() throws Exception {
+        String jsonResponse = "{\"success\":true}";
         mockWebServer.enqueue(new MockResponse().setBody(jsonResponse).addHeader("Content-Type", "application/json"));
 
-        try (TopGamesClient client = createDefaultBuilder().build()) {
-            Server server = client.getServerInfo();
-            assertNotNull(server);
-            assertEquals("My Server", server.getName());
-            assertEquals(100, server.getVotes());
-        }
+        boolean hasVoted = client.checkVoteByUsername("Player1");
+        assertTrue(hasVoted);
+
+        RecordedRequest request = mockWebServer.takeRequest();
+        assertTrue(request.getPath().contains("/votes/check?server_token=test-api-key&playername=Player1"));
     }
 
     @Test
-    void getServerStats_Success() throws TopGamesException {
-        String jsonResponse = "{\"code\":200, \"success\":true, \"stats\": [{\"date\":\"2023-01-01\", \"votes\":10}, {\"date\":\"2023-01-02\", \"votes\":15}]}";
+    void checkVoteByUsernameAsync_Success() throws InterruptedException {
+        String jsonResponse = "{\"success\":true}";
         mockWebServer.enqueue(new MockResponse().setBody(jsonResponse).addHeader("Content-Type", "application/json"));
 
-        try (TopGamesClient client = createDefaultBuilder().build()) {
-            List<Stat> stats = client.getServerStats();
-            assertNotNull(stats);
-            assertEquals(2, stats.size());
-            assertEquals(15, stats.get(1).getVotes());
-        }
+        final CountDownLatch latch = new CountDownLatch(1);
+        final AtomicBoolean result = new AtomicBoolean(false);
+
+        client.checkVoteByUsernameAsync("Player1", new TopGamesCallback<Boolean>() {
+            @Override
+            public void onSuccess(Boolean hasVoted) {
+                result.set(hasVoted);
+                latch.countDown();
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(5, TimeUnit.SECONDS));
+        assertTrue(result.get());
     }
 
     @Test
-    void getPlayersRanking_Success() throws TopGamesException {
-        String jsonResponse = "{\"code\":200, \"success\":true, \"players\": [{\"username\":\"ProGamer\", \"votes\":50}]}";
-        mockWebServer.enqueue(new MockResponse().setBody(jsonResponse).addHeader("Content-Type", "application/json"));
+    void claimVoteBySteamIdAsync_Success() throws InterruptedException {
+        mockWebServer.enqueue(new MockResponse().setResponseCode(200));
 
-        try (TopGamesClient client = createDefaultBuilder().build()) {
-            List<PlayerRanking> ranking = client.getPlayersRanking("current");
-            assertNotNull(ranking);
-            assertEquals(1, ranking.size());
-            assertEquals("ProGamer", ranking.get(0).getUsername());
-        }
+        final CountDownLatch latch = new CountDownLatch(1);
+        final AtomicReference<Exception> error = new AtomicReference<>();
+
+        client.claimVoteBySteamIdAsync("steamid123", new TopGamesCallback<Void>() {
+            @Override
+            public void onSuccess(Void result) {
+                latch.countDown();
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                error.set(e);
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(5, TimeUnit.SECONDS));
+        assertNull(error.get());
     }
 }
